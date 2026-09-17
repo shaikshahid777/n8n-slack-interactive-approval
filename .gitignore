@@ -1,0 +1,54 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.env
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / system artifacts
+.DS_Store
+.DS_Store?
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Node.js dependencies / build artifacts
+node_modules/
+dist/
+build/
+coverage/
+
+# n8n local/runtime artifacts
+.n8n/
+*.n8n
+
+# Python cache (useful for supporting scripts)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local OS-specific files
+.npm/
+.DockerDesktop/
