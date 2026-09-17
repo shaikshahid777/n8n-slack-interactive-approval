@@ -24,26 +24,24 @@
 
 **Slack Interactive Approval Workflow** is a secure, event-driven approval automation built with **n8n** and the **Slack API**.
 
-The solution allows a user to initiate an approval request directly from Slack with `/approve-request`. n8n validates the incoming Slack request, immediately acknowledges the command, posts an interactive **Block Kit** approval card, and waits for the decision-maker to select **Approve** or **Reject**. The callback is authenticated again before the original Slack message is dynamically updated with the final decision and decision-maker identity.
+A user initiates an approval request directly from Slack with `/approve-request`. n8n validates the inbound request, immediately acknowledges it, posts an interactive **Slack Block Kit** approval card, and processes the decision-maker's button click. The callback is authenticated before the original Slack message is updated with the final decision and decision-maker identity.
 
-The accompanying technical report describes the project as an enterprise-grade approval workflow and a sanitized template suitable for public repository distribution. fileciteturn4file0L2-L15
+## Key Capabilities
 
-## Why This Project Matters
-
-This project demonstrates a practical automation pattern for approval-driven business processes:
-
-- Reduce manual approval communication.
-- Keep approval actions inside Slack.
-- Provide an explicit, auditable decision state.
-- Authenticate inbound Slack events before changing workflow state.
-- Protect webhook endpoints against stale/replayed requests.
-- Keep credentials and signing secrets outside the public workflow export.
+- ⚡ **Slash Command Trigger** — `/approve-request` starts the approval flow from Slack.
+- 🧩 **Interactive Block Kit UI** — Approve and Reject buttons provide an in-Slack decision experience.
+- 🔐 **HMAC-SHA256 Verification** — authenticates inbound Slack requests using the raw body and signing secret.
+- 🛡️ **Replay Protection** — rejects requests outside the 300-second timestamp window.
+- 🔀 **Decision Routing** — a Switch node routes `approve` and `reject` actions.
+- 🔄 **Dynamic State Synchronization** — updates the original Slack message with the final state.
+- 👤 **Decision Attribution** — records the Slack user ID associated with the decision.
+- 🧼 **Sanitized Public Template** — no live credentials or secrets are intended to be stored in the repository.
 
 ## Architecture
 
 ```text
 ┌──────────────────────┐
-│       Slack User     │
+│      Slack User      │
 └──────────┬───────────┘
            │ /approve-request
            ▼
@@ -52,8 +50,8 @@ This project demonstrates a practical automation pattern for approval-driven bus
 └────────────┬─────────────────┘
              ▼
 ┌──────────────────────────────┐
-│ HMAC-SHA256 Signature Check   │
-│ + 300s Replay Protection      │
+│ HMAC-SHA256 + Replay Check   │
+│      300-second window       │
 └────────────┬─────────────────┘
              ▼
 ┌──────────────────────────────┐
@@ -62,7 +60,7 @@ This project demonstrates a practical automation pattern for approval-driven bus
 └────────────┬─────────────────┘
              ▼
 ┌──────────────────────────────┐
-│ Slack Block Kit Approval Card │
+│ Slack Block Kit Approval Card│
 │       [Approve] [Reject]     │
 └────────────┬─────────────────┘
              │ button click
@@ -72,8 +70,7 @@ This project demonstrates a practical automation pattern for approval-driven bus
 └────────────┬─────────────────┘
              ▼
 ┌──────────────────────────────┐
-│ HMAC-SHA256 Signature Check  │
-│ + Timestamp Validation        │
+│ HMAC-SHA256 + Timestamp Check│
 └────────────┬─────────────────┘
              ▼
        ┌───────────────┐
@@ -83,7 +80,7 @@ This project demonstrates a practical automation pattern for approval-driven bus
           ┌────┴────┐
           ▼         ▼
      ┌─────────┐ ┌─────────┐
-     │Approved │ │Rejected │
+     │ Approved│ │ Rejected│
      └────┬────┘ └────┬────┘
           └──────┬─────┘
                  ▼
@@ -93,40 +90,40 @@ This project demonstrates a practical automation pattern for approval-driven bus
       └─────────────────────┘
 ```
 
-## Core Workflow
+## n8n Node Matrix
 
-| Stage | n8n Node | Type | Functional Purpose |
+| Node Name | Type | Functional Purpose |
+|---|---|---|
+| **Slash Command Webhook** | Webhook (POST) | Receives `/approve-request` payloads from Slack. |
+| **Verify Slash Signature** | Code (JavaScript) | Validates the Slack request signature using HMAC-SHA256. |
+| **Respond Processing** | Respond to Webhook | Immediately returns `Processing your request...`. |
+| **Send Approval Message** | Slack | Posts the interactive Block Kit approval card. |
+| **Interaction Webhook** | Webhook (POST) | Receives interactive Slack button callbacks. |
+| **Verify Button Signature** | Code (JavaScript) | Authenticates the button-click callback. |
+| **Approve or Reject** | Switch | Routes execution by the interaction value. |
+| **Mark Approved** | Slack | Updates the original message with the approval result. |
+| **Mark Rejected** | Slack | Updates the original message with the rejection result. |
+
+## Slack Interaction Model
+
+The Block Kit card uses explicit action/value pairs:
+
+| Action | `action_id` | `value` | Final State |
 |---|---|---|---|
-| 1 | **Slash Command Webhook** | Webhook (POST) | Receives `/approve-request` payloads from Slack. |
-| 2 | **Verify Slash Signature** | Code (JavaScript) | Validates Slack's `x-slack-signature` using HMAC-SHA256. |
-| 3 | **Respond Processing** | Respond to Webhook | Immediately acknowledges the request with `Processing your request...`. |
-| 4 | **Send Approval Message** | Slack | Posts the interactive Block Kit approval card. |
-| 5 | **Interaction Webhook** | Webhook (POST) | Receives Slack interactive button callbacks. |
-| 6 | **Verify Button Signature** | Code (JavaScript) | Authenticates the interactive callback before processing it. |
-| 7 | **Approve or Reject** | Switch | Routes execution according to the interaction value. |
-| 8 | **Mark Approved** | Slack | Updates the original message with the approval result and Slack user. |
-| 9 | **Mark Rejected** | Slack | Updates the original message with the rejection result and Slack user. |
+| Approve | `approve` | `approve` | `Request Approved` |
+| Reject | `reject` | `reject` | `Request Rejected` |
 
-The workflow export confirms the webhook, signature-verification, response, Slack, switch, and message-update nodes described above. fileciteturn4file1L5-L10 fileciteturn4file1L37-L64
+The interaction handler uses the callback's user ID, channel ID, message timestamp, and action value to update the correct Slack message.
 
-## Interactive Slack UI
+## Security Implementation
 
-The approval card uses Slack Block Kit action buttons with distinct action/value pairs:
+### HMAC-SHA256 Signature Verification
 
-| Action | `action_id` | `value` | Result |
-|---|---|---|---|
-| Approve | `approve` | `approve` | Updates the request to **Request Approved** |
-| Reject | `reject` | `reject` | Updates the request to **Request Rejected** |
-
-The workflow export defines these button values and routes them through the **Approve or Reject** Switch node. fileciteturn4file1L52-L61 fileciteturn4file1L112-L165
-
-## Security Design
-
-### HMAC-SHA256 Verification
-
-Slack requests are authenticated using the request timestamp and raw request body. The core signing construction is:
+Slack signatures are calculated from the version prefix, request timestamp, and exact raw request body:
 
 ```javascript
+const crypto = require('crypto');
+
 const baseString = 'v0:' + timestamp + ':' + rawBody;
 
 const expected = 'v0=' + crypto
@@ -140,40 +137,37 @@ const valid =
     Buffer.from(expected),
     Buffer.from(signature)
   );
+
+if (!valid) {
+  throw new Error('Rejected: invalid Slack signature');
+}
 ```
 
-The workflow also checks the request timestamp and rejects requests outside a **300-second / 5-minute window**, providing replay-attack protection. The technical report documents the same HMAC construction and timestamp protection. fileciteturn4file0L21-L25 fileciteturn4file0L56-L64
+### Replay-Attack Protection
 
-### Security Principles
+Requests are checked against the Slack request timestamp. Requests older than **300 seconds (5 minutes)** are rejected before business logic is processed.
 
-- Validate inbound Slack signatures before processing events.
-- Use the raw request body when calculating the signature.
-- Enforce timestamp freshness.
-- Use timing-safe signature comparison.
-- Never commit live credentials or signing secrets.
-- Use sanitized placeholders in public workflow exports.
+### Secret Management
 
-> **Security warning:** Never paste your Slack Signing Secret, Bot Token, Gemini/API keys, or other credentials into this README, the workflow JSON, screenshots, or public Git history.
+The repository is a sanitized template. **Never commit real Slack Signing Secrets, Bot Tokens, API keys, webhook secrets, or other credentials.** Configure secrets through n8n credentials or the secure environment/secret mechanism provided by your deployment.
 
-## Request Flow
+## Request Lifecycle
 
 ### 1. Slash Command
 
 ```text
-User → Slack → POST /approve-request → n8n
+Slack → POST /approve-request → n8n
 ```
 
-The webhook validates the request and returns the immediate acknowledgement:
+The workflow validates the request and immediately returns:
 
 ```text
 Processing your request...
 ```
 
-The exported workflow uses `responseMode: responseNode` and a dedicated Respond to Webhook node for this acknowledgement. fileciteturn4file1L5-L10 fileciteturn4file1L37-L45
+### 2. Approval Card
 
-### 2. Approval Message
-
-n8n sends a Block Kit message containing:
+n8n posts an interactive message:
 
 ```text
 New Approval Request
@@ -184,83 +178,76 @@ New Approval Request
 ### 3. Interactive Callback
 
 ```text
-Slack Button Click
-       ↓
+Button Click
+    ↓
 POST /slack-interactions
-       ↓
+    ↓
 Verify Signature
-       ↓
-Read action/value/user/channel/message timestamp
-       ↓
-Approve or Reject
-       ↓
-Update original Slack message
+    ↓
+Extract action + user + channel + message timestamp
+    ↓
+Approve / Reject Switch
+    ↓
+Update Original Slack Message
 ```
-
-The exported workflow uses `slack-interactions` for the callback endpoint and updates the original message using its channel ID and message timestamp. fileciteturn4file1L81-L106 fileciteturn4file1L177-L220
 
 ## Setup & Deployment
 
 ### Prerequisites
 
-- A running n8n instance.
-- A Slack workspace where you can create/configure an app.
-- A Slack app with a bot user and the required permissions.
-- Secure access to the Slack Signing Secret.
+- n8n instance
+- Slack workspace with permission to create/configure an app
+- Slack App with bot user and required scopes
+- Slack Signing Secret stored securely
 
-### Step 1 — Import the Workflow
+### 1. Import the Workflow
 
 1. Open n8n.
-2. Go to **Workflows → Import from File**.
-3. Select `Slack_Interactive_Approval.json`.
-4. Review the imported nodes and expressions.
+2. Select **Workflows → Import from File**.
+3. Import `Slack_Interactive_Approval.json`.
+4. Review the workflow before activation.
 
-The project report documents the same import process. fileciteturn4file0L67-L70
-
-### Step 2 — Configure Slack Credentials
+### 2. Configure Slack Credentials
 
 Configure the Slack OAuth/Bot Token credential in n8n and attach it to the Slack nodes.
 
-Do **not** store the Bot Token directly inside the workflow JSON or README.
+### 3. Configure the Signing Secret
 
-### Step 3 — Configure Signature Verification
+Provide the Slack Signing Secret through secure deployment configuration. Do not put the real secret into GitHub.
 
-Provide the Slack Signing Secret through a secure secret/environment mechanism supported by your n8n deployment.
+### 4. Configure `/approve-request`
 
-The public JSON in this repository is sanitized and must not contain a real secret.
-
-### Step 4 — Configure Slack Slash Command
-
-In your Slack App configuration:
+In the Slack App configuration:
 
 1. Create the `/approve-request` Slash Command.
 2. Copy the active n8n webhook URL.
-3. Set that URL as the Slash Command Request URL.
+3. Set it as the Slash Command Request URL.
 
-### Step 5 — Configure Interactivity
+### 5. Configure Interactivity
 
-Under Slack App **Interactivity & Shortcuts**:
+Under **Interactivity & Shortcuts**:
 
 1. Enable interactivity.
 2. Set the n8n interaction webhook URL.
 3. Save the Slack App configuration.
 
-### Step 6 — Activate & Test
+### 6. Activate & Test
 
-Activate the workflow and execute:
+Run:
 
 ```text
 /approve-request
 ```
 
-Verify that:
+Verify the following:
 
-- Slack receives the immediate processing acknowledgement.
-- The approval card appears.
-- **Approve** updates the original message to the approved state.
-- **Reject** updates the original message to the rejected state.
-- The decision-maker's Slack user ID is included in the final status.
-- Invalid or stale signed requests are rejected.
+- Immediate processing acknowledgement is returned.
+- Approval card appears in Slack.
+- Approve changes the message to the approved state.
+- Reject changes the message to the rejected state.
+- Decision-maker identity is included.
+- Invalid signatures are rejected.
+- Stale/replayed requests are rejected.
 
 ## Repository Structure
 
@@ -276,11 +263,9 @@ n8n-slack-interactive-approval/
 │
 └── Screenshots/
     ├── ... Slack UI interaction evidence
-    ├── ... n8n workflow/execution evidence
-    └── ... project screenshots
+    ├── ... n8n workflow evidence
+    └── ... execution screenshots
 ```
-
-The repository is intentionally organized around the sanitized workflow export, technical report, and visual assessment evidence.
 
 ## Demonstration
 
@@ -288,58 +273,58 @@ The repository is intentionally organized around the sanitized workflow export, 
 
 ▶ **[Watch the complete project demonstration](https://www.loom.com/share/a183df2c099d4aca970ed91d1a74a347)**
 
-The demonstration accompanies the repository as evidence of the implemented Slack interaction and n8n workflow behavior.
+The video demonstrates the implemented workflow and provides visual evidence for the project assessment.
 
-## Documentation
+## Project Documentation
 
-- **Workflow:** `Slack_Interactive_Approval.json`
-- **Technical Report:** `Slack_Interactive_Approval_Project_Report.pdf`
-- **Visual Evidence:** `Screenshots/`
-- **Demo:** Loom video linked above
+| Artifact | Purpose |
+|---|---|
+| `Slack_Interactive_Approval.json` | Sanitized n8n workflow export |
+| `Slack_Interactive_Approval_Project_Report.pdf` | Technical project report |
+| `Screenshots/` | Slack and n8n implementation evidence |
+| Loom Demo | End-to-end visual demonstration |
 
-The technical report covers the executive summary, capabilities, workflow node matrix, security verification, replay protection, and deployment procedure. fileciteturn4file0L7-L27 fileciteturn4file0L67-L75
-
-## Troubleshooting Checklist
+## Troubleshooting
 
 ### Slack does not receive the response
 
-- Confirm the Slash Command Request URL is correct.
+- Confirm the Slash Command Request URL.
 - Confirm the n8n workflow is active.
-- Check that the webhook returns an immediate response.
-- Review the n8n execution log.
+- Check the n8n execution log.
+- Confirm the webhook returns immediately.
 
 ### Signature verification fails
 
-- Confirm the Signing Secret is correct.
+- Confirm the Signing Secret.
 - Confirm the raw request body is used.
-- Confirm `x-slack-signature` and `x-slack-request-timestamp` are received.
-- Check that the request timestamp is within the allowed 300-second window.
+- Confirm `x-slack-signature` and `x-slack-request-timestamp` are present.
+- Check the 300-second timestamp window.
 
 ### Button clicks do not update the message
 
 - Confirm Slack Interactivity is enabled.
-- Confirm the interaction Request URL points to the correct n8n webhook.
-- Confirm the Slack credential has permission to update the message.
-- Verify the callback contains the expected `approve` or `reject` value.
+- Confirm the interaction Request URL is correct.
+- Confirm the Slack credential has the required permissions.
+- Confirm the callback contains `approve` or `reject`.
 
 ## Project Status
 
-**Status:** Completed assessment project / sanitized public template
+**Status:** Completed assessment project / Sanitized public template
 
-The accompanying report describes the workflow as **Production Ready / Sanitized Template** and documents HMAC-SHA256 verification, replay protection, dynamic state synchronization, and public-safe secret handling. fileciteturn4file0L2-L6
+The implementation focuses on secure request verification, interactive Slack decision handling, replay protection, dynamic message state synchronization, and public-safe credential handling.
 
-> **Note:** “Production Ready / Sanitized Template” describes the project documentation. Before production use, deploy it with your organization's own Slack app, credentials, secret management, logging, access controls, and operational policies.
+> **Production note:** Before using this workflow in a real organization, configure organization-specific access controls, secret management, monitoring, logging, error handling, and operational policies.
 
 ## License
 
-This project is released under the **MIT License**. See [`LICENSE`](LICENSE) for the complete license text.
+Released under the **MIT License**. See [`LICENSE`](LICENSE) for the complete license text.
 
 ## Author
 
-**Shaik Mohammad Shaheed**
+**Shaik Mohammad Shaheed**  
+Workflow Automation & DevOps
 
-Workflow Automation & DevOps  
-Built with **n8n + Slack API + Block Kit + Webhooks**
+**Technology Stack:** n8n • Slack API • Slack Block Kit • Webhooks • JavaScript • HMAC-SHA256
 
 ---
 
