@@ -1,0 +1,345 @@
+{
+  "name": "Slack Interactive Approval",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approve-request",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "8fb99f62-92e5-4213-97e3-42273792d154",
+      "name": "Slash Command Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        208
+      ],
+      "webhookId": "c123bd07-9153-4561-8f1b-99ea1949df3b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst signature = headers['x-slack-signature'];\nconst timestamp = headers['x-slack-request-timestamp'];\n\n// Read the raw request body (webhook \"Raw Body\" option stores it as binary \"data\")\nlet raw = '';\ntry {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  raw = buf.toString('utf8');\n} catch (e) {\n  raw = '';\n}\n// Fallback: reconstruct the form-encoded body from the parsed fields\nif (!raw && item.json.body) {\n  raw = Object.keys(item.json.body).map(k => k + '=' + encodeURIComponent(item.json.body[k])).join('&');\n}\n\n// Paste your Slack Signing Secret between the quotes to enable verification.\n// (This instance blocks env-var access, so use this constant.)\nlet signingSecret = 'YOUR_SLACK_SIGNING_SECRET';\ntry {\n  if (!signingSecret) signingSecret = $env.SLACK_SIGNING_SECRET || '';\n} catch (e) {\n  // env access disabled on this instance - fall back to the constant above\n}\n\nif (signingSecret) {\n  if (!signature || !timestamp) {\n    throw new Error('Rejected: missing Slack signature headers (401)');\n  }\n  // Replay protection: reject requests older than 5 minutes\n  const now = Math.floor(Date.now() / 1000);\n  if (Math.abs(now - Number(timestamp)) > 300) {\n    throw new Error('Rejected: Slack request timestamp too old (401)');\n  }\n  const baseString = 'v0:' + timestamp + ':' + raw;\n  const expected = 'v0=' + crypto.createHmac('sha256', signingSecret).update(baseString).digest('hex');\n  const ok = signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));\n  if (!ok) {\n    throw new Error('Rejected: invalid Slack signature (401)');\n  }\n} else {\n  console.warn('SLACK_SIGNING_SECRET not configured - signature verification skipped');\n}\n\n// Rebuild the parsed body from the raw payload so downstream nodes keep working\nconst bodyObj = {};\nraw.split('&').forEach(pair => {\n  if (!pair) return;\n  const idx = pair.indexOf('=');\n  const k = idx === -1 ? pair : pair.slice(0, idx);\n  const v = idx === -1 ? '' : pair.slice(idx + 1);\n  bodyObj[decodeURIComponent(k)] = decodeURIComponent(v.split('+').join(' '));\n});\nreturn [{ json: { headers, body: bodyObj } }];"
+      },
+      "id": "74780e93-56a5-4da5-85a6-c4ed1728093c",
+      "name": "Verify Slash Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Processing your request...",
+        "options": {}
+      },
+      "id": "1379da2d-9788-411f-8c25-e4b117a28498",
+      "name": "Respond Processing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        48,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $json.body.channel_id }}",
+          "mode": "id"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"*New Approval Request*\\nPlease approve or reject this request.\"\n    }\n  },\n  {\n    \"type\": \"actions\",\n    \"elements\": [\n      {\n        \"type\": \"button\",\n        \"text\": { \"type\": \"plain_text\", \"text\": \"Approve\" },\n        \"style\": \"primary\",\n        \"value\": \"approve\",\n        \"action_id\": \"approve\"\n      },\n      {\n        \"type\": \"button\",\n        \"text\": { \"type\": \"plain_text\", \"text\": \"Reject\" },\n        \"style\": \"danger\",\n        \"value\": \"reject\",\n        \"action_id\": \"reject\"\n      }\n    ]\n  }\n]\n}",
+        "text": "New Approval Request",
+        "otherOptions": {}
+      },
+      "id": "44479e85-d399-40ab-8864-e98d6867246f",
+      "name": "Send Approval Message",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        240,
+        208
+      ],
+      "webhookId": "63118bca-cb3e-43dc-8561-37d6240b436a",
+      "credentials": {
+        "slackApi": {
+          "id": "VQqWZVPddBQOwiSw",
+          "name": "Slack account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-interactions",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "1672f4e2-0e6e-4be9-a770-d920093f0b5c",
+      "name": "Interaction Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        544,
+        336
+      ],
+      "webhookId": "4b210d38-9157-4908-951d-6307154edbe0"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst signature = headers['x-slack-signature'];\nconst timestamp = headers['x-slack-request-timestamp'];\n\n// Read the raw request body (webhook \"Raw Body\" option stores it as binary \"data\")\nlet raw = '';\ntry {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  raw = buf.toString('utf8');\n} catch (e) {\n  raw = '';\n}\n// Fallback: reconstruct the form-encoded body from the parsed fields\nif (!raw && item.json.body) {\n  raw = Object.keys(item.json.body).map(k => k + '=' + encodeURIComponent(item.json.body[k])).join('&');\n}\n\n// Paste your Slack Signing Secret between the quotes to enable verification.\n// (This instance blocks env-var access, so use this constant.)\nlet signingSecret = 'YOUR_SLACK_SIGNING_SECRET';\ntry {\n  if (!signingSecret) signingSecret = $env.SLACK_SIGNING_SECRET || '';\n} catch (e) {\n  // env access disabled on this instance - fall back to the constant above\n}\n\nif (signingSecret) {\n  if (!signature || !timestamp) {\n    throw new Error('Rejected: missing Slack signature headers (401)');\n  }\n  // Replay protection: reject requests older than 5 minutes\n  const now = Math.floor(Date.now() / 1000);\n  if (Math.abs(now - Number(timestamp)) > 300) {\n    throw new Error('Rejected: Slack request timestamp too old (401)');\n  }\n  const baseString = 'v0:' + timestamp + ':' + raw;\n  const expected = 'v0=' + crypto.createHmac('sha256', signingSecret).update(baseString).digest('hex');\n  const ok = signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));\n  if (!ok) {\n    throw new Error('Rejected: invalid Slack signature (401)');\n  }\n} else {\n  console.warn('SLACK_SIGNING_SECRET not configured - signature verification skipped');\n}\n\n// Rebuild the parsed body from the raw payload so downstream nodes keep working\nconst bodyObj = {};\nraw.split('&').forEach(pair => {\n  if (!pair) return;\n  const idx = pair.indexOf('=');\n  const k = idx === -1 ? pair : pair.slice(0, idx);\n  const v = idx === -1 ? '' : pair.slice(idx + 1);\n  bodyObj[decodeURIComponent(k)] = decodeURIComponent(v.split('+').join(' '));\n});\nreturn [{ json: { headers, body: bodyObj } }];"
+      },
+      "id": "c9f9867f-5d22-469d-a08d-31c29a20d338",
+      "name": "Verify Button Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ JSON.parse($json.body.payload).actions[0].value }}",
+                    "rightValue": "approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "8cf4821b-7b58-4248-ac92-8a03cab839b5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Approved"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ JSON.parse($json.body.payload).actions[0].value }}",
+                    "rightValue": "reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "38ba006d-894f-4337-ba6c-847cd1b25e7b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rejected"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a58e4037-583e-4e05-89a2-d05f82322a8f",
+      "name": "Approve or Reject",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ JSON.parse($json.body.payload).channel.id }}"
+        },
+        "ts": "={{ JSON.parse($json.body.payload).message.ts }}",
+        "text": "={{ \":white_check_mark: *Request Approved* by <@\" + JSON.parse($json.body.payload).user.id + \">\" }}",
+        "updateFields": {},
+        "otherOptions": {}
+      },
+      "id": "f2fbe0b6-0cda-4f77-a2aa-4dfd1b9e8906",
+      "name": "Mark Approved",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1248,
+        176
+      ],
+      "webhookId": "ecd8320a-b3bf-408c-b964-fceda7346817",
+      "credentials": {
+        "slackApi": {
+          "id": "VQqWZVPddBQOwiSw",
+          "name": "Slack account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ JSON.parse($json.body.payload).channel.id }}"
+        },
+        "ts": "={{ JSON.parse($json.body.payload).message.ts }}",
+        "text": "={{ \":x: *Request Rejected* by <@\" + JSON.parse($json.body.payload).user.id + \">\" }}",
+        "updateFields": {},
+        "otherOptions": {}
+      },
+      "id": "36533741-a7e1-4deb-b8ed-56bcf76a9fdb",
+      "name": "Mark Rejected",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1248,
+        368
+      ],
+      "webhookId": "f547ab6d-f0e1-41f3-b03f-6b2d703e084e",
+      "credentials": {
+        "slackApi": {
+          "id": "VQqWZVPddBQOwiSw",
+          "name": "Slack account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Slash Command Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Slash Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Slash Signature": {
+      "main": [
+        [
+          {
+            "node": "Respond Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Processing": {
+      "main": [
+        [
+          {
+            "node": "Send Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interaction Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Button Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Button Signature": {
+      "main": [
+        [
+          {
+            "node": "Approve or Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve or Reject": {
+      "main": [
+        [
+          {
+            "node": "Mark Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0e08a936-6f33-4bb5-a2ab-f3746022e898",
+  "meta": {
+    "instanceId": "6abe9931809978352319cb21622ffdff38accce530bfc6c488633e9f18461d78"
+  },
+  "nodeGroups": [
+    {
+      "id": "22a4c1d0-c0cc-4c74-9e4b-9afeaace49bf",
+      "name": "Send approval request",
+      "nodeIds": [
+        "74780e93-56a5-4da5-85a6-c4ed1728093c",
+        "1379da2d-9788-411f-8c25-e4b117a28498",
+        "44479e85-d399-40ab-8864-e98d6867246f"
+      ],
+      "description": "Verifies the Slack signature, acknowledges the /approve-request command, then posts a Block Kit message with Approve and Reject buttons."
+    },
+    {
+      "id": "59a3e6fb-a0ed-40a6-b91c-61636626945d",
+      "name": "Handle button response",
+      "nodeIds": [
+        "c9f9867f-5d22-469d-a08d-31c29a20d338",
+        "a58e4037-583e-4e05-89a2-d05f82322a8f",
+        "f2fbe0b6-0cda-4f77-a2aa-4dfd1b9e8906",
+        "36533741-a7e1-4deb-b8ed-56bcf76a9fdb"
+      ],
+      "description": "Verifies the Slack signature, checks whether Approve or Reject was pressed, and updates the original message to show the outcome."
+    }
+  ],
+  "id": "DmxWMitoWf9MQpj3",
+  "tags": []
+}
